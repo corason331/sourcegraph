@@ -73,18 +73,14 @@ func middleware(next http.Handler) http.Handler {
 			http.Error(w, "unable to normalize username", http.StatusInternalServerError)
 			return
 		}
-		userID, safeErrMsg, err := auth.GetAndSaveUser(r.Context(), auth.GetAndSaveUserOp{
-			UserProps: db.NewUser{Username: username},
-			ExternalAccount: extsvc.ExternalAccountSpec{
-				ServiceType: providerType,
-				// Store rawUsername, not normalized username, to prevent two users with distinct
-				// pre-normalization usernames from being merged into the same normalized username
-				// (and therefore letting them each impersonate the other).
-				AccountID: rawUsername,
-			},
-			CreateIfNotExist: true,
-			LookUpByUsername: true,
-		})
+		userID, safeErrMsg, err := auth.CreateOrUpdateUser(r.Context(), db.NewUser{Username: username}, extsvc.ExternalAccountSpec{
+			ServiceType: providerType,
+
+			// Store headerValue, not normalized username, to prevent two users with distinct
+			// pre-normalization usernames from being merged into the same normalized username
+			// (and therefore letting them each impersonate the other).
+			AccountID: headerValue,
+		}, extsvc.ExternalAccountData{})
 		if err != nil {
 			log15.Error("unable to get/create user from SSO header", "header", authProvider.UsernameHeader, "rawUsername", rawUsername, "err", err, "userErr", safeErrMsg)
 			http.Error(w, safeErrMsg, http.StatusInternalServerError)

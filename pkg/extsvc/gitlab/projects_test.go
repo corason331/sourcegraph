@@ -19,7 +19,7 @@ type mockHTTPResponseBody struct {
 	responseBody string
 }
 
-func (s *mockHTTPResponseBody) Do(req *http.Request) (*http.Response, error) {
+func (s *mockHTTPResponseBody) RoundTrip(req *http.Request) (*http.Response, error) {
 	s.count++
 	return &http.Response{
 		Request:    req,
@@ -32,7 +32,7 @@ type mockHTTPEmptyResponse struct {
 	statusCode int
 }
 
-func (s mockHTTPEmptyResponse) Do(req *http.Request) (*http.Response, error) {
+func (s mockHTTPEmptyResponse) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{
 		Request:    req,
 		StatusCode: s.statusCode,
@@ -62,10 +62,9 @@ func TestClient_GetProject(t *testing.T) {
 	"http_url_to_repo": "https://gitlab.example.com/n1/n2/r.git",
 	"ssh_url_to_repo": "git@gitlab.example.com:n1/n2/r.git"
 }
-`,
-	}
+`}
 	c := newTestClient(t)
-	c.httpClient = &mock
+	c.httpClient.Transport = &mock
 
 	want := Project{
 		ProjectCommon: ProjectCommon{
@@ -78,8 +77,7 @@ func TestClient_GetProject(t *testing.T) {
 		},
 	}
 
-	// Test first fetch (cache empty)
-	proj, err := c.GetProject(context.Background(), GetProjectOp{PathWithNamespace: "n1/n2/r"})
+	proj, err := c.GetProject(context.Background(), 0, "n1/n2/r")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +92,7 @@ func TestClient_GetProject(t *testing.T) {
 	}
 
 	// Test that proj is cached (and therefore NOT fetched) from client on second request.
-	proj, err = c.GetProject(context.Background(), GetProjectOp{PathWithNamespace: "n1/n2/r"})
+	proj, err = c.GetProject(context.Background(), 0, "n1/n2/r")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,21 +105,6 @@ func TestClient_GetProject(t *testing.T) {
 	if !reflect.DeepEqual(proj, &want) {
 		t.Errorf("got project %+v, want %+v", proj, &want)
 	}
-
-	// Test the `NoCache: true` option
-	proj, err = c.GetProject(context.Background(), GetProjectOp{PathWithNamespace: "n1/n2/r", CommonOp: CommonOp{NoCache: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if proj == nil {
-		t.Error("proj == nil")
-	}
-	if mock.count != 2 {
-		t.Errorf("mock.count == %d, expected to hit cache", mock.count)
-	}
-	if !reflect.DeepEqual(proj, &want) {
-		t.Errorf("got project %+v, want %+v", proj, &want)
-	}
 }
 
 // TestClient_GetProject_nonexistent tests the behavior of GetProject when called
@@ -129,9 +112,9 @@ func TestClient_GetProject(t *testing.T) {
 func TestClient_GetProject_nonexistent(t *testing.T) {
 	mock := mockHTTPEmptyResponse{http.StatusNotFound}
 	c := newTestClient(t)
-	c.httpClient = &mock
+	c.httpClient.Transport = &mock
 
-	proj, err := c.GetProject(context.Background(), GetProjectOp{PathWithNamespace: "doesnt/exist"})
+	proj, err := c.GetProject(context.Background(), 0, "doesnt/exist")
 	if !IsNotFound(err) {
 		t.Errorf("got err == %v, want IsNotFound(err) == true", err)
 	}

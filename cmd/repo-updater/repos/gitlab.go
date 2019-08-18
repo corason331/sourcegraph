@@ -11,14 +11,24 @@ import (
 
 	multierror "github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
+<<<<<<< HEAD
 	"github.com/sourcegraph/sourcegraph/pkg/conf/reposource"
 	"github.com/sourcegraph/sourcegraph/pkg/extsvc/gitlab"
 	"github.com/sourcegraph/sourcegraph/pkg/httpcli"
 	"github.com/sourcegraph/sourcegraph/pkg/jsonc"
+=======
+	"github.com/sourcegraph/sourcegraph/pkg/api"
+	"github.com/sourcegraph/sourcegraph/pkg/atomicvalue"
+	"github.com/sourcegraph/sourcegraph/pkg/conf"
+	"github.com/sourcegraph/sourcegraph/pkg/conf/reposource"
+	"github.com/sourcegraph/sourcegraph/pkg/extsvc/gitlab"
+	"github.com/sourcegraph/sourcegraph/pkg/repoupdater/protocol"
+>>>>>>> origin/2.13
 	"github.com/sourcegraph/sourcegraph/schema"
 	log15 "gopkg.in/inconshreveable/log15.v2"
 )
 
+<<<<<<< HEAD
 // A GitLabSource yields repositories from a single GitLab connection configured
 // in Sourcegraph via the external services configuration.
 type GitLabSource struct {
@@ -34,6 +44,60 @@ func NewGitLabSource(svc *ExternalService, cf *httpcli.Factory) (*GitLabSource, 
 	var c schema.GitLabConnection
 	if err := jsonc.Unmarshal(svc.Config, &c); err != nil {
 		return nil, fmt.Errorf("external service id=%d config error: %s", svc.ID, err)
+=======
+var gitlabConnections = atomicvalue.New()
+
+func init() {
+	conf.Watch(func() {
+		gitlabConnections.Set(func() interface{} {
+			gitlabConf := conf.Get().Gitlab
+
+			var hasGitLabDotComConnection bool
+			for _, c := range gitlabConf {
+				u, _ := url.Parse(c.Url)
+				if u != nil && (u.Hostname() == "gitlab.com" || u.Hostname() == "www.gitlab.com") {
+					hasGitLabDotComConnection = true
+					break
+				}
+			}
+			if !hasGitLabDotComConnection {
+				// Add a GitLab.com entry by default, to support navigating to URL paths like
+				// /gitlab.com/foo/bar to auto-add that project.
+				gitlabConf = append(gitlabConf, &schema.GitLabConnection{
+					ProjectQuery:                []string{"none"}, // don't try to list all repositories during syncs
+					Url:                         "https://gitlab.com",
+					InitialRepositoryEnablement: true,
+				})
+			}
+
+			var conns []*gitlabConnection
+			for _, c := range gitlabConf {
+				conn, err := newGitLabConnection(c)
+				if err != nil {
+					log15.Error("Error processing configured GitLab connection. Skipping it.", "url", c.Url, "error", err)
+					continue
+				}
+				conns = append(conns, conn)
+			}
+			return conns
+		})
+		gitLabRepositorySyncWorker.restart()
+	})
+}
+
+// getGitLabConnection returns the GitLab connection (config + API client) that is responsible for
+// the repository specified by the args.
+func getGitLabConnection(args protocol.RepoLookupArgs) (*gitlabConnection, error) {
+	gitlabConnections := gitlabConnections.Get().([]*gitlabConnection)
+	if args.ExternalRepo != nil && args.ExternalRepo.ServiceType == gitlab.GitLabServiceType {
+		// Look up by external repository spec.
+		for _, conn := range gitlabConnections {
+			if args.ExternalRepo.ServiceID == conn.baseURL.String() {
+				return conn, nil
+			}
+		}
+		return nil, errors.Wrap(gitlab.ErrNotFound, fmt.Sprintf("no configured GitLab connection with URL: %q", args.ExternalRepo.ServiceID))
+>>>>>>> origin/2.13
 	}
 	return newGitLabSource(svc, &c, cf)
 }
@@ -49,11 +113,30 @@ func newGitLabSource(svc *ExternalService, c *schema.GitLabConnection, cf *httpc
 		cf = NewHTTPClientFactory()
 	}
 
+<<<<<<< HEAD
 	var opts []httpcli.Opt
 	if c.Certificate != "" {
 		pool, err := newCertPool(c.Certificate)
 		if err != nil {
 			return nil, err
+=======
+	ghrepoToRepoInfo := func(proj *gitlab.Project, conn *gitlabConnection) *protocol.RepoInfo {
+		return &protocol.RepoInfo{
+			URI:          gitlabProjectToRepoPath(conn, proj),
+			ExternalRepo: gitlab.GitLabExternalRepoSpec(proj, *conn.baseURL),
+			Description:  proj.Description,
+			Fork:         proj.ForkedFromProject != nil,
+			Archived:     proj.Archived,
+			VCS: protocol.VCSInfo{
+				URL: conn.authenticatedRemoteURL(proj),
+			},
+			Links: &protocol.RepoLinks{
+				Root:   proj.WebURL,
+				Tree:   proj.WebURL + "/tree/{rev}/{path}",
+				Blob:   proj.WebURL + "/blob/{rev}/{path}",
+				Commit: proj.WebURL + "/commit/{commit}",
+			},
+>>>>>>> origin/2.13
 		}
 		opts = append(opts, httpcli.NewCertPoolOpt(pool))
 	}
@@ -63,10 +146,22 @@ func newGitLabSource(svc *ExternalService, c *schema.GitLabConnection, cf *httpc
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	exclude := make(map[string]bool, len(c.Exclude))
 	for _, r := range c.Exclude {
 		if r.Name != "" {
 			exclude[r.Name] = true
+=======
+	if args.ExternalRepo != nil && args.ExternalRepo.ServiceType == gitlab.GitLabServiceType {
+		// Look up by external repository spec.
+		id, err := strconv.Atoi(args.ExternalRepo.ID)
+		if err != nil {
+			return nil, true, err
+		}
+		proj, err := conn.client.GetProject(ctx, id, "")
+		if proj != nil {
+			repo = ghrepoToRepoInfo(proj, conn)
+>>>>>>> origin/2.13
 		}
 
 		if r.Id != 0 {
@@ -98,6 +193,7 @@ func (s GitLabSource) ExternalServices() ExternalServices {
 	return ExternalServices{s.svc}
 }
 
+<<<<<<< HEAD
 func (s GitLabSource) makeRepo(proj *gitlab.Project) *Repo {
 	urn := s.svc.URN()
 	return &Repo{
@@ -120,6 +216,24 @@ func (s GitLabSource) makeRepo(proj *gitlab.Project) *Repo {
 			urn: {
 				ID:       urn,
 				CloneURL: s.authenticatedRemoteURL(proj),
+=======
+// updateGitLabProjects ensures that all provided repositories exist in the repository table.
+func updateGitLabProjects(ctx context.Context, conn *gitlabConnection) {
+	projs := conn.listAllProjects(ctx)
+
+	repoChan := make(chan repoCreateOrUpdateRequest)
+	defer close(repoChan)
+	go createEnableUpdateRepos(ctx, fmt.Sprintf("gitlab:%s", conn.config.Token), repoChan)
+	for proj := range projs {
+		repoChan <- repoCreateOrUpdateRequest{
+			RepoCreateOrUpdateRequest: api.RepoCreateOrUpdateRequest{
+				RepoURI:      gitlabProjectToRepoPath(conn, proj),
+				ExternalRepo: gitlab.GitLabExternalRepoSpec(proj, *conn.baseURL),
+				Description:  proj.Description,
+				Fork:         proj.ForkedFromProject != nil,
+				Archived:     proj.Archived,
+				Enabled:      conn.config.InitialRepositoryEnablement,
+>>>>>>> origin/2.13
 			},
 		},
 		Metadata: proj,

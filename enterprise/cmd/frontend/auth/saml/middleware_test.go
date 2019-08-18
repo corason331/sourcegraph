@@ -28,6 +28,7 @@ import (
 	"github.com/sourcegraph/sourcegraph/enterprise/pkg/license"
 	"github.com/sourcegraph/sourcegraph/pkg/actor"
 	"github.com/sourcegraph/sourcegraph/pkg/conf"
+	"github.com/sourcegraph/sourcegraph/pkg/extsvc"
 	"github.com/sourcegraph/sourcegraph/schema"
 )
 
@@ -203,9 +204,9 @@ func TestMiddleware(t *testing.T) {
 	// Mock user
 	mockedExternalID := "testuser_id"
 	const mockedUserID = 123
-	auth.MockGetAndSaveUser = func(ctx context.Context, op auth.GetAndSaveUserOp) (userID int32, safeErrMsg string, err error) {
-		if op.ExternalAccount.ServiceType == "saml" && op.ExternalAccount.ServiceID == idpServer.IDP.MetadataURL.String() && op.ExternalAccount.ClientID == "http://example.com/.auth/saml/metadata" && op.ExternalAccount.AccountID == mockedExternalID {
-			return mockedUserID, "", nil
+	auth.SetMockCreateOrUpdateUser(func(u db.NewUser, a extsvc.ExternalAccountSpec) (userID int32, err error) {
+		if a.ServiceType == "saml" && a.ServiceID == idpServer.IDP.MetadataURL.String() && a.ClientID == "http://example.com/.auth/saml/metadata" && a.AccountID == mockedExternalID {
+			return mockedUserID, nil
 		}
 		return 0, "safeErr", fmt.Errorf("account %v not found in mock", op.ExternalAccount)
 	}
